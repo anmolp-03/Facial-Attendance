@@ -5,6 +5,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const dotenv = require('dotenv');
 const connectDB = require('./config/db');
+const cookieParser = require('cookie-parser');
 
 // Load environment variables
 dotenv.config();
@@ -16,6 +17,7 @@ app.use(express.json());
 app.use(cors());
 app.use(helmet());
 app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
+app.use(cookieParser());
 
 // Connect to MongoDB
 connectDB();
