@@ -1,0 +1,10 @@
+opencv-python
+face_recognition
+flask
+cloudinary
+python-dotenv
+requests
+pymongo
+dnspython
+bcrypt
+python-jose[cryptography] 
