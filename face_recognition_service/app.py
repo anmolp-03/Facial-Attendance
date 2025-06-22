@@ -12,6 +12,8 @@ import bcrypt
 from jose import jwt
 from functools import wraps
 from db_config import face_collection, employee_collection, attendance_collection
+from flask_cors import CORS
+import base64
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +33,8 @@ cloudinary.config(
     api_key=os.getenv('CLOUDINARY_API_KEY'),
     api_secret=os.getenv('CLOUDINARY_API_SECRET')
 )
+
+CORS(app)
 
 def admin_required(f):
     @wraps(f)
@@ -56,11 +60,11 @@ def detect_liveness(image):
     try:
         # Convert to grayscale
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-        
         # Load the pre-trained classifiers
-        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
-        
+        haarcascades_path = cv2.__file__.replace('cv2.cpython-{}.so'.format(cv2.__version__.split('.')[0]), '') + 'data/'
+        face_cascade = cv2.CascadeClassifier(haarcascades_path + 'haarcascade_frontalface_default.xml')
+        eye_cascade = cv2.CascadeClassifier(haarcascades_path + 'haarcascade_eye.xml')
+
         # Detect faces
         faces = face_cascade.detectMultiScale(gray, 1.3, 5)
         
@@ -351,6 +355,78 @@ def get_attendance():
     except Exception as e:
         logger.error(f"Error in getting attendance: {str(e)}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/face-recognition/scan', methods=['POST'])
+def face_scan():
+    data = request.get_json()
+    if not data or 'image' not in data:
+        return jsonify({'success': False, 'message': 'No image provided'}), 400
+    image_b64 = data['image']
+    # Decode base64 image
+    image_data = image_b64.split(',')[1] if ',' in image_b64 else image_b64
+    nparr = np.frombuffer(base64.b64decode(image_data), np.uint8)
+    image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    # Face recognition logic
+    try:
+        # Detect face and get encoding
+        face_locations = face_recognition.face_locations(image)
+        if not face_locations:
+            return jsonify({'success': False, 'message': 'No face detected in the image'}), 404
+        face_encoding = face_recognition.face_encodings(image, face_locations)[0]
+        # Get all face encodings from database
+        stored_faces = list(face_collection.find({}, {'face_encoding': 1, 'employee_id': 1}))
+        if not stored_faces:
+            return jsonify({'success': False, 'message': 'No faces registered in the system'}), 404
+        # Compare with stored faces
+        matches = face_recognition.compare_faces(
+            [np.array(face['face_encoding']) for face in stored_faces],
+            face_encoding,
+            tolerance=0.6
+        )
+        if True not in matches:
+            return jsonify({'success': False, 'message': 'Unknown user. Please register first.'}), 404
+        # Get the matched employee
+        matched_index = matches.index(True)
+        matched_employee = stored_faces[matched_index]
+        # Look up employee details
+        employee = employee_collection.find_one({'employee_id': matched_employee['employee_id']})
+        if not employee:
+            return jsonify({'success': False, 'message': 'Unknown user. Please register first.'}), 404
+        # Check if attendance already marked today
+        today = datetime.utcnow().date()
+        existing_attendance = attendance_collection.find_one({
+            'employee_id': matched_employee['employee_id'],
+            'timestamp': {
+                '$gte': datetime.combine(today, datetime.min.time()),
+                '$lte': datetime.combine(today, datetime.max.time())
+            }
+        })
+        if existing_attendance:
+            return jsonify({
+                'success': True,
+                'message': 'Attendance already marked for today',
+                'name': employee['name'],
+                'employeeId': employee['employee_id']
+            }), 200
+        # Log attendance
+        attendance_log = {
+            'employee_id': matched_employee['employee_id'],
+            'timestamp': datetime.utcnow(),
+            'confidence': float(1 - face_recognition.face_distance(
+                [face_encoding],
+                [np.array(matched_employee['face_encoding'])]
+            )[0])
+        }
+        attendance_collection.insert_one(attendance_log)
+        return jsonify({
+            'success': True,
+            'message': 'Attendance marked successfully',
+            'name': employee['name'],
+            'employeeId': employee['employee_id']
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in face scan: {str(e)}")
+        return jsonify({'success': False, 'message': 'Internal server error'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8000, debug=True) 

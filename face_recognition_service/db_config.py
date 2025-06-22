@@ -1,17 +1,19 @@
+import os
 from pymongo import MongoClient
 from dotenv import load_dotenv
-import os
 import logging
 
+# Load environment variables from .env file
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+# Never commit secrets or credentials to GitHub!
+MONGODB_URI = os.environ.get("MONGODB_URI")
+
 def get_database():
     try:
-        # Get MongoDB connection string from environment variable
-        mongo_uri = os.getenv('MONGODB_URI', 'mongodb://localhost:27017/')
-        client = MongoClient(mongo_uri)
+        client = MongoClient(MONGODB_URI)
         
         # Test the connection
         client.admin.command('ping')
@@ -29,5 +31,10 @@ db = get_database()
 # Collections
 face_collection = db.face_encodings
 employee_collection = db.employees
-attendance_collection = db.attendance_logs 
+attendance_collection = db.attendance_logs
+
+# Example collections (adjust as needed)
+face_collection = db.get_collection('faces')
+employee_collection = db.get_collection('employees')
+attendance_collection = db.get_collection('attendance') 
  
