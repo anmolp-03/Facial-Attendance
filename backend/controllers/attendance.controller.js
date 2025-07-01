@@ -1,6 +1,10 @@
 const Attendance = require('../models/attendance.models');
 const User = require('../models/user.models');
 const mongoose = require('mongoose');
+const cloudinary = require('cloudinary').v2;
+const { spawn } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 
 // Helper to get start of day for consistent date querying
 const getStartOfDay = (date) => {
@@ -14,53 +18,41 @@ const getStartOfDay = (date) => {
 // @access Public (or adjust based on face rec service's auth needs)
 exports.markAttendance = async (req, res) => {
     try {
-        const { userId, method, location } = req.body; // Assuming userId is passed from face rec service or app
-        
+        const { userId, method, location } = req.body;
         if (!userId || !method) {
             return res.status(400).json({ message: 'User ID and method are required.' });
         }
-
         const user = await User.findById(userId);
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
-
         if (user.role === 'admin') {
             return res.status(403).json({ message: 'Admins cannot mark attendance via this endpoint.' });
         }
-
-        const today = getStartOfDay(new Date());
-
-        // Find if there's an existing attendance record for today for this user
+        // Check if this is a check-out (most recent record without checkOutTime)
         let attendanceRecord = await Attendance.findOne({
             user: userId,
-            date: today
-        });
-
+            checkOutTime: { $exists: false }
+        }).sort({ checkInTime: -1 });
         if (attendanceRecord) {
-            // If a record exists, it's a check-out
-            if (attendanceRecord.checkOutTime) {
-                return res.status(400).json({ message: 'You have already checked out for today.' });
-            }
             attendanceRecord.checkOutTime = new Date();
             attendanceRecord.method = method;
-            attendanceRecord.location = location || attendanceRecord.location; // Update location if provided
+            attendanceRecord.location = location || attendanceRecord.location;
             await attendanceRecord.save();
-            res.status(200).json({ message: 'Checked out successfully.', attendance: attendanceRecord });
+            return res.status(200).json({ message: 'Checked out successfully.', attendance: attendanceRecord });
         } else {
-            // No record, it's a check-in
+            // Always create a new record for check-in
             attendanceRecord = new Attendance({
                 user: userId,
-                date: today,
+                date: getStartOfDay(new Date()),
                 checkInTime: new Date(),
-                status: 'present', // Default status on check-in
+                status: 'present',
                 method,
                 location
             });
             await attendanceRecord.save();
-            res.status(201).json({ message: 'Checked in successfully.', attendance: attendanceRecord });
+            return res.status(201).json({ message: 'Checked in successfully.', attendance: attendanceRecord });
         }
-
     } catch (err) {
         console.error('Mark attendance error:', err);
         res.status(500).json({ message: 'Server error', error: err.message });
@@ -577,4 +569,109 @@ exports.getMyAttendanceSummary = async (req, res) => {
         console.error('Get my attendance summary error:', err);
         res.status(500).json({ message: 'Server error', error: err.message });
     }
+};
+
+const scriptPath = path.join(__dirname, '..', '..', 'face_recognition_service', 'face_scan.py');
+
+exports.scanAndMarkAttendance = async (req, res) => {
+  try {
+    const { faceImage, method = 'face', location } = req.body;
+    if (!faceImage) {
+      return res.status(400).json({ message: 'Face image is required.' });
+    }
+    // 1. Save the base64 image to a temporary file
+    const tmpDir = path.join(__dirname, '../../tmp');
+    if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
+    const tmpFile = path.join(tmpDir, `scan_${Date.now()}.jpg`);
+    fs.writeFileSync(tmpFile, Buffer.from(faceImage, 'base64'));
+
+    // 2. Call Python script to get face encoding (pass local file path)
+    const getFaceEncoding = (imagePath) => {
+      return new Promise((resolve, reject) => {
+        const py = spawn('python', [scriptPath, imagePath]);
+        let result = '';
+        let error = '';
+        py.stdout.on('data', (data) => { result += data.toString(); });
+        py.stderr.on('data', (data) => { error += data.toString(); });
+        py.on('close', (code) => {
+          fs.unlinkSync(tmpFile); // Clean up temp file
+          if (code !== 0 || error) return reject(error || 'Python process failed');
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.success) resolve(parsed.encoding);
+            else reject(parsed.error);
+          } catch (e) {
+            reject('Invalid JSON from Python');
+          }
+        });
+      });
+    };
+
+    let scanEncoding;
+    try {
+      scanEncoding = await getFaceEncoding(tmpFile);
+    } catch (err) {
+      return res.status(400).json({ message: 'Face encoding failed: ' + err });
+    }
+
+    // 3. Compare encoding to all users
+    const users = await User.find({ faceEmbeddings: { $exists: true, $ne: [] } });
+    const euclideanDistance = (a, b) => {
+      if (!a || !b || a.length !== b.length) return Infinity;
+      return Math.sqrt(a.reduce((sum, v, i) => sum + Math.pow(v - b[i], 2), 0));
+    };
+    let matchedUser = null;
+    let minDistance = Infinity;
+    for (const user of users) {
+      const dist = euclideanDistance(scanEncoding, user.faceEmbeddings);
+      if (dist < 0.6 && dist < minDistance) { // 0.6 is a common threshold
+        minDistance = dist;
+        matchedUser = user;
+      }
+    }
+    if (!matchedUser) {
+      return res.status(404).json({ message: 'No matching user found.' });
+    }
+
+    // 4. Mark attendance for matched user (reuse markAttendance logic)
+    req.body.userId = matchedUser._id;
+    req.body.method = method;
+    req.body.location = location;
+    // Call markAttendance and capture its response
+    // Instead of returning directly, capture the response data
+    const originalJson = res.json;
+    res.json = (data) => {
+      // Add employee name, employeeId, and time
+      const user = matchedUser;
+      let time = null;
+      if (data && data.attendance) {
+        if (data.attendance.checkInTime && !data.attendance.checkOutTime) {
+          time = data.attendance.checkInTime;
+        } else if (data.attendance.checkOutTime) {
+          time = data.attendance.checkOutTime;
+        }
+      }
+      let formattedTime = null;
+      if (time) {
+        const d = new Date(time);
+        let hours = d.getHours();
+        const minutes = d.getMinutes();
+        const ampm = hours >= 12 ? 'pm' : 'am';
+        hours = hours % 12;
+        hours = hours ? hours : 12; // the hour '0' should be '12'
+        const mins = minutes < 10 ? '0' + minutes : minutes;
+        formattedTime = `${hours}:${mins} ${ampm}`;
+      }
+      return originalJson.call(res, {
+        ...data,
+        employeeId: user.employeeId,
+        name: user.name,
+        time: formattedTime,
+      });
+    };
+    return exports.markAttendance(req, res);
+  } catch (err) {
+    console.error('scanAndMarkAttendance error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
 }; 

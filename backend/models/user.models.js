@@ -36,6 +36,10 @@ const userSchema = new mongoose.Schema({
     type: Array,
     default: []
   },
+  faceImageUrl: {
+    type: String,
+    default: ''
+  },
   rfid: {
     type: String,
     sparse: true,
@@ -68,6 +72,14 @@ const userSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  joiningDate: {
+    type: Date,
+    default: Date.now
+  },
+  leavingDate: {
+    type: Date,
+    default: null
   }
 }, {
   timestamps: true

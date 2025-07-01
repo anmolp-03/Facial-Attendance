@@ -1,6 +1,18 @@
 const User = require('../models/user.models');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const fetch = require('node-fetch');
+const cloudinary = require('cloudinary').v2;
+const { spawn } = require('child_process');
+const path = require('path');
+const scriptPath = path.join(__dirname, '..', '..', 'face_recognition_service', 'face_scan.py');
+
+// Configure Cloudinary (make sure your .env has these variables)
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET,
+});
 
 async function generateEmployeeId() {
   const lastUser = await User.findOne({ 
@@ -91,7 +103,7 @@ exports.setupFirstAdmin = async (req, res) => {
 
 exports.register = async (req, res) => {
   try {
-    let { name, email, password, role = 'employee', department, position } = req.body;
+    let { name, email, password, role = 'employee', department, position, joiningDate } = req.body;
 
     // Validate required fields
     if (!name || !email || !password) {
@@ -127,7 +139,8 @@ exports.register = async (req, res) => {
       password: hashedPassword,
       role,
       department: department || 'General',
-      position: position || 'Employee'
+      position: position || 'Employee',
+      joiningDate: joiningDate ? new Date(joiningDate) : Date.now()
     };
 
     // Only generate employeeId for non-admin users
@@ -268,34 +281,58 @@ exports.logout = (req, res) => {
 
 exports.getAllUsers = async (req, res) => {
   try {
-    const { role, department, position, employeeId, name, sortBy, sortOrder = 'asc' } = req.query;
+    const { role, department, position, employeeId, name, sortBy, sortOrder = 'asc', search, joiningDateFrom, joiningDateTo, leavingDateFrom, leavingDateTo, activeOnly, inactiveOnly } = req.query;
     let query = {};
     let sort = {};
 
-    if (role) {
-      query.role = role;
+    if (role) query.role = role;
+    if (department) query.department = department;
+    if (position) query.position = position;
+    if (employeeId) query.employeeId = employeeId;
+    if (name) query.name = { $regex: name, $options: 'i' };
+    if (search) {
+      const s = String(search);
+      query.$or = [
+        { name: { $regex: s, $options: 'i' } },
+        { email: { $regex: s, $options: 'i' } },
+        { department: { $regex: s, $options: 'i' } },
+        { position: { $regex: s, $options: 'i' } },
+      ];
     }
-    if (department) {
-      query.department = department;
+    if (joiningDateFrom || joiningDateTo) {
+      query.joiningDate = {};
+      if (joiningDateFrom) query.joiningDate.$gte = new Date(joiningDateFrom);
+      if (joiningDateTo) query.joiningDate.$lte = new Date(joiningDateTo);
     }
-    if (position) {
-      query.position = position;
+    if (leavingDateFrom || leavingDateTo) {
+      query.leavingDate = {};
+      if (leavingDateFrom) query.leavingDate.$gte = new Date(leavingDateFrom);
+      if (leavingDateTo) query.leavingDate.$lte = new Date(leavingDateTo);
     }
-    if (employeeId) {
-      query.employeeId = employeeId;
+    if (activeOnly === 'true') {
+      query.leavingDate = null;
     }
-    if (name) {
-      query.name = { $regex: name, $options: 'i' }; // Case-insensitive search
+    if (inactiveOnly === 'true') {
+      query.leavingDate = { $ne: null };
     }
-
     if (sortBy) {
-      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+      if (sortBy === 'employeeId') {
+        sort.employeeId = sortOrder === 'desc' ? -1 : 1;
+      } else if (sortBy === 'joiningDate') {
+        sort.joiningDate = sortOrder === 'desc' ? -1 : 1;
+      } else {
+        sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+      }
     } else {
-      sort.name = 1; // Default sort by name ascending
+      sort.name = 1;
     }
-
     const users = await User.find(query, '-password').sort(sort);
-    res.json(users);
+    const usersWithFace = users.map(u => {
+      const obj = u.toObject();
+      if (!('faceImageUrl' in obj)) obj.faceImageUrl = '';
+      return obj;
+    });
+    res.json(usersWithFace);
   } catch (err) {
     console.error('Get users error:', err);
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -323,6 +360,201 @@ exports.deleteUser = async (req, res) => {
     res.json({ message: 'User deleted successfully.' });
   } catch (err) {
     console.error('Delete user error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+exports.registerWithFace = async (req, res) => {
+  try {
+    const { name, email, password, department, position, faceImage } = req.body;
+    if (!name || !email || !password || !faceImage) {
+      return res.status(400).json({ message: 'All fields and face image are required.' });
+    }
+
+    // Check if user already exists
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ message: 'User already exists.' });
+    }
+
+    // 1. Upload image to Cloudinary
+    const dataUri = `data:image/jpeg;base64,${faceImage}`;
+    const uploadResult = await cloudinary.uploader.upload(dataUri, {
+      folder: 'employee_faces',
+      resource_type: 'image',
+    });
+    const cloudinaryUrl = uploadResult.secure_url;
+
+    // 2. Call Python script to get face encoding
+    const getFaceEncoding = (imageUrl) => {
+      return new Promise((resolve, reject) => {
+        const py = spawn('python', [scriptPath, imageUrl]);
+        let result = '';
+        let error = '';
+        py.stdout.on('data', (data) => { result += data.toString(); });
+        py.stderr.on('data', (data) => { error += data.toString(); });
+        py.on('close', (code) => {
+          if (code !== 0 || error) return reject(error || 'Python process failed');
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.success) resolve(parsed.encoding);
+            else reject(parsed.error);
+          } catch (e) {
+            reject('Invalid JSON from Python');
+          }
+        });
+      });
+    };
+
+    let faceEncoding;
+    try {
+      faceEncoding = await getFaceEncoding(cloudinaryUrl);
+    } catch (err) {
+      return res.status(400).json({ message: 'Face encoding failed: ' + err });
+    }
+
+    // 3. Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // 4. Create user in MongoDB with Cloudinary URL and face encoding
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword,
+      role: 'employee',
+      department: department || 'General',
+      position: position || 'Employee',
+      employeeId: await generateEmployeeId(),
+      faceImageUrl: cloudinaryUrl,
+      faceEmbeddings: faceEncoding,
+    });
+    await user.save();
+
+    res.status(201).json({
+      message: 'User and face registered successfully.',
+      user: {
+        employeeId: user.employeeId,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        position: user.position,
+        faceImageUrl: user.faceImageUrl,
+      }
+    });
+  } catch (err) {
+    console.error('registerWithFace error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+exports.addFaceToUser = async (req, res) => {
+  try {
+    const { email, faceImage } = req.body;
+    if (!email || !faceImage) {
+      return res.status(400).json({ message: 'Email and face image are required.' });
+    }
+    const user = await User.findOne({ email });
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+
+    // 1. Upload image to Cloudinary
+    const dataUri = `data:image/jpeg;base64,${faceImage}`;
+    const uploadResult = await cloudinary.uploader.upload(dataUri, {
+      folder: 'employee_faces',
+      resource_type: 'image',
+    });
+    const cloudinaryUrl = uploadResult.secure_url;
+
+    // 2. Call Python script to get face encoding
+    const getFaceEncoding = (imageUrl) => {
+      return new Promise((resolve, reject) => {
+        const py = spawn('python', [scriptPath, imageUrl]);
+        let result = '';
+        let error = '';
+        py.stdout.on('data', (data) => { result += data.toString(); });
+        py.stderr.on('data', (data) => { error += data.toString(); });
+        py.on('close', (code) => {
+          if (code !== 0 || error) return reject(error || 'Python process failed');
+          try {
+            const parsed = JSON.parse(result);
+            if (parsed.success) resolve(parsed.encoding);
+            else reject(parsed.error);
+          } catch (e) {
+            reject('Invalid JSON from Python');
+          }
+        });
+      });
+    };
+
+    let faceEncoding;
+    try {
+      faceEncoding = await getFaceEncoding(cloudinaryUrl);
+    } catch (err) {
+      return res.status(400).json({ message: 'Face encoding failed: ' + err });
+    }
+
+    // 3. Update user in MongoDB with Cloudinary URL and face encoding
+    user.faceImageUrl = cloudinaryUrl;
+    user.faceEmbeddings = faceEncoding;
+    await user.save();
+
+    res.json({
+      message: 'Face registered successfully.',
+      faceImageUrl: user.faceImageUrl,
+    });
+  } catch (err) {
+    console.error('addFaceToUser error:', err);
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+exports.adminReauth = async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ message: 'No token provided.' });
+    }
+    const token = authHeader.split(' ')[1];
+    let decoded;
+    try {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+    } catch {
+      return res.status(401).json({ message: 'Invalid token.' });
+    }
+    const admin = await User.findById(decoded.id);
+    if (!admin || admin.role !== 'admin') {
+      return res.status(401).json({ message: 'Not an admin.' });
+    }
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ message: 'Password required.' });
+    }
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) {
+      return res.status(401).json({ message: 'Incorrect password.' });
+    }
+    res.json({ message: 'Re-authenticated.' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+};
+
+exports.updateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, email, department, position, joiningDate, leavingDate } = req.body;
+    const user = await User.findById(id);
+    if (!user) return res.status(404).json({ message: 'User not found.' });
+    if (name) user.name = name;
+    if (email) user.email = email;
+    if (department !== undefined) user.department = department;
+    if (position !== undefined) user.position = position;
+    if (joiningDate !== undefined) user.joiningDate = joiningDate ? new Date(joiningDate) : null;
+    if (leavingDate !== undefined) user.leavingDate = leavingDate ? new Date(leavingDate) : null;
+    await user.save();
+    const { password, ...userData } = user.toObject();
+    res.json({ message: 'User updated successfully.', user: userData });
+  } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 }; 

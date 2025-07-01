@@ -8,6 +8,10 @@ import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { Clock, Users, Edit, Trash2, Plus } from "lucide-react"
 import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Accordion, AccordionItem, AccordionTrigger, AccordionContent } from "@/components/ui/accordion"
+import { Select, SelectTrigger, SelectContent, SelectItem } from "@/components/ui/select"
+import { Avatar, AvatarImage, AvatarFallback } from "@/components/ui/avatar"
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog"
 
 interface AttendanceRecord {
   _id: string
@@ -18,362 +22,217 @@ interface AttendanceRecord {
   checkOut?: string
   status: "present" | "absent" | "late"
   hoursWorked: number
+  checkInTime?: string
+  checkOutTime?: string
+}
+
+interface Employee {
+  _id: string
+  name: string
+  email: string
+  department?: string
+  position?: string
+  createdAt: string
+  role?: string
+  faceEmbeddings?: any[]
+  faceImageUrl?: string
+  employeeId?: string
 }
 
 export default function AttendanceManagement() {
-  const [records, setRecords] = useState<AttendanceRecord[]>([])
+  const [employees, setEmployees] = useState<Employee[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  const [editingRecord, setEditingRecord] = useState<AttendanceRecord | null>(null)
-  const [newRecord, setNewRecord] = useState({
-    userId: "",
-    date: "",
-    checkIn: "",
-    checkOut: "",
-    status: "present" as "present" | "absent" | "late",
-  })
-  const [showAddForm, setShowAddForm] = useState(false)
-  const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null)
+  const [search, setSearch] = useState("")
+  const [sortBy, setSortBy] = useState<'name' | 'department' | 'employeeId'>('name')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
+  const [selectedEmployee, setSelectedEmployee] = useState<Employee | null>(null)
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceRecord[]>([])
+  const [attendanceLoading, setAttendanceLoading] = useState(false)
 
   useEffect(() => {
-    fetchAttendanceRecords()
-  }, [])
+    fetchEmployees()
+  }, [search, sortBy, sortOrder])
 
-  const fetchAttendanceRecords = async () => {
+  useEffect(() => {
+    if (selectedEmployee) {
+      fetchAttendanceForEmployee(selectedEmployee._id)
+    } else {
+      setAttendanceRecords([])
+    }
+  }, [selectedEmployee])
+
+  const fetchEmployees = async () => {
+    setIsLoading(true)
     try {
       const token = localStorage.getItem("adminToken")
-      const response = await fetch("http://localhost:5000/api/attendance/admin/summary", {
+      const params = new URLSearchParams()
+      if (search) params.append('search', search)
+      params.append('sortBy', sortBy)
+      params.append('sortOrder', sortOrder)
+      const response = await fetch(`http://localhost:5000/api/auth/users?${params.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
-
       if (response.ok) {
         const data = await response.json()
-        setRecords(data.records || [])
+        // Only show employees (not admins)
+        const all = Array.isArray(data) ? data : data.users || []
+        setEmployees(all.filter((emp: Employee) => emp.role !== 'admin'))
       }
     } catch (error) {
-      console.error("Failed to fetch attendance records:", error)
+      setEmployees([])
     } finally {
       setIsLoading(false)
     }
   }
 
-  const handleAddRecord = async () => {
+  const fetchAttendanceForEmployee = async (employeeId: string) => {
+    setAttendanceLoading(true)
     try {
       const token = localStorage.getItem("adminToken")
-      const response = await fetch("http://localhost:5000/api/attendance/admin/add", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(newRecord),
-      })
-
+      const response = await fetch(`http://localhost:5000/api/attendance/admin/user/${employeeId}`,
+        { headers: { Authorization: `Bearer ${token}` } })
       if (response.ok) {
-        setMessage({ type: "success", text: "Attendance record added successfully" })
-        setShowAddForm(false)
-        setNewRecord({
-          userId: "",
-          date: "",
-          checkIn: "",
-          checkOut: "",
-          status: "present",
-        })
-        fetchAttendanceRecords()
-      } else {
         const data = await response.json()
-        setMessage({ type: "error", text: data.message || "Failed to add record" })
+        setAttendanceRecords(data)
+      } else {
+        setAttendanceRecords([])
       }
-    } catch (error) {
-      setMessage({ type: "error", text: "Network error" })
+    } catch {
+      setAttendanceRecords([])
+    } finally {
+      setAttendanceLoading(false)
     }
   }
 
-  const handleUpdateRecord = async () => {
-    if (!editingRecord) return
+  const getDurationString = (checkIn: string, checkOut: string) => {
+    const ms = new Date(checkOut).getTime() - new Date(checkIn).getTime();
+    if (isNaN(ms) || ms <= 0) return '--';
+    const hours = Math.floor(ms / 3600000);
+    const minutes = Math.floor((ms % 3600000) / 60000);
+    return `${hours} hr ${minutes} min`;
+  };
 
-    try {
-      const token = localStorage.getItem("adminToken")
-      const response = await fetch(`http://localhost:5000/api/attendance/admin/${editingRecord._id}`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(editingRecord),
-      })
-
-      if (response.ok) {
-        setMessage({ type: "success", text: "Attendance record updated successfully" })
-        setEditingRecord(null)
-        fetchAttendanceRecords()
-      } else {
-        const data = await response.json()
-        setMessage({ type: "error", text: data.message || "Failed to update record" })
+  const getTotalDurationString = (records: AttendanceRecord[]) => {
+    let totalMs = 0;
+    records.forEach(r => {
+      if (r.checkInTime && r.checkOutTime) {
+        totalMs += new Date(r.checkOutTime).getTime() - new Date(r.checkInTime).getTime();
       }
-    } catch (error) {
-      setMessage({ type: "error", text: "Network error" })
-    }
-  }
-
-  const handleDeleteRecord = async (recordId: string) => {
-    if (!confirm("Are you sure you want to delete this attendance record?")) return
-
-    try {
-      const token = localStorage.getItem("adminToken")
-      const response = await fetch(`http://localhost:5000/api/attendance/admin/${recordId}`, {
-        method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` },
-      })
-
-      if (response.ok) {
-        setMessage({ type: "success", text: "Attendance record deleted successfully" })
-        setRecords((prev) => prev.filter((record) => record._id !== recordId))
-      } else {
-        const data = await response.json()
-        setMessage({ type: "error", text: data.message || "Failed to delete record" })
-      }
-    } catch (error) {
-      setMessage({ type: "error", text: "Network error" })
-    }
-  }
-
-  if (isLoading) {
-    return (
-      <div className="text-center py-8">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
-        <p>Loading attendance records...</p>
-      </div>
-    )
-  }
+    });
+    const hours = Math.floor(totalMs / 3600000);
+    const minutes = Math.floor((totalMs % 3600000) / 60000);
+    return `${hours} hr ${minutes} min`;
+  };
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex justify-between items-center">
-        <div>
-          <h2 className="text-2xl font-bold">Attendance Management</h2>
-          <p className="text-gray-600">Manage and monitor employee attendance records</p>
-        </div>
-        <Button onClick={() => setShowAddForm(true)} className="flex items-center space-x-2">
-          <Plus className="h-4 w-4" />
-          <span>Add Record</span>
-        </Button>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-6 gap-2">
+        <Input
+          type="text"
+          className="border rounded px-3 py-2 w-full md:w-80"
+          placeholder="Search employees by name, email, or department..."
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+        />
+        <Select value={sortBy} onValueChange={v => setSortBy(v as any)}>
+          <SelectTrigger className="w-40">Sort by</SelectTrigger>
+          <SelectContent>
+            <SelectItem value="name">Name</SelectItem>
+            <SelectItem value="department">Department</SelectItem>
+            <SelectItem value="employeeId">Employee ID</SelectItem>
+          </SelectContent>
+        </Select>
+        <Select value={sortOrder} onValueChange={v => setSortOrder(v as any)}>
+          <SelectTrigger className="w-24">Order</SelectTrigger>
+          <SelectContent>
+            <SelectItem value="asc">A-Z</SelectItem>
+            <SelectItem value="desc">Z-A</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
-
-      {/* Messages */}
-      {message && (
-        <Alert className={message.type === "success" ? "border-green-500 bg-green-50" : "border-red-500 bg-red-50"}>
-          <AlertDescription className={message.type === "success" ? "text-green-800" : "text-red-800"}>
-            {message.text}
-          </AlertDescription>
-        </Alert>
+      {isLoading ? (
+        <div className="text-center py-8">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p>Loading employees...</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {employees.length > 0 ? (
+            employees.map(employee => (
+              <div key={employee._id} className="bg-white rounded-lg shadow p-4 flex items-center gap-4 cursor-pointer hover:shadow-lg transition"
+                onClick={() => setSelectedEmployee(employee)}>
+                <Avatar>
+                  <AvatarImage src={employee.faceImageUrl} alt={employee.name} />
+                  <AvatarFallback>{employee.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2)}</AvatarFallback>
+                </Avatar>
+                <div className="flex-1">
+                  <div className="font-semibold text-lg">{employee.name}</div>
+                  <div className="text-xs text-gray-400 font-mono">ID: {employee.employeeId}</div>
+                  {employee.department && <Badge variant="secondary">{employee.department}</Badge>}
+                </div>
+              </div>
+            ))
+          ) : (
+            <div className="text-center py-8 text-gray-500 col-span-full">No employees found</div>
+          )}
+        </div>
       )}
-
-      {/* Add Record Form */}
-      {showAddForm && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Add New Attendance Record</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="userId">Employee ID</Label>
-                <Input
-                  id="userId"
-                  value={newRecord.userId}
-                  onChange={(e) => setNewRecord((prev) => ({ ...prev, userId: e.target.value }))}
-                  placeholder="Enter employee ID"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="date">Date</Label>
-                <Input
-                  id="date"
-                  type="date"
-                  value={newRecord.date}
-                  onChange={(e) => setNewRecord((prev) => ({ ...prev, date: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="checkIn">Check In</Label>
-                <Input
-                  id="checkIn"
-                  type="time"
-                  value={newRecord.checkIn}
-                  onChange={(e) => setNewRecord((prev) => ({ ...prev, checkIn: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="checkOut">Check Out</Label>
-                <Input
-                  id="checkOut"
-                  type="time"
-                  value={newRecord.checkOut}
-                  onChange={(e) => setNewRecord((prev) => ({ ...prev, checkOut: e.target.value }))}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="status">Status</Label>
-                <select
-                  id="status"
-                  value={newRecord.status}
-                  onChange={(e) => setNewRecord((prev) => ({ ...prev, status: e.target.value as any }))}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                >
-                  <option value="present">Present</option>
-                  <option value="late">Late</option>
-                  <option value="absent">Absent</option>
-                </select>
-              </div>
-            </div>
-            <div className="flex space-x-2">
-              <Button onClick={handleAddRecord}>Add Record</Button>
-              <Button variant="outline" onClick={() => setShowAddForm(false)}>
-                Cancel
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Attendance Records */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Attendance Records</CardTitle>
-          <CardDescription>Recent attendance entries for all employees</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {records.length > 0 ? (
-              records.map((record) => (
-                <div key={record._id} className="flex items-center justify-between p-4 border rounded-lg">
-                  {editingRecord && editingRecord._id === record._id ? (
-                    // Edit Mode
-                    <div className="flex-1 grid grid-cols-1 md:grid-cols-5 gap-4 items-center">
-                      <div>
-                        <Label className="text-xs">Employee</Label>
-                        <div className="font-medium">{record.userName}</div>
-                      </div>
-                      <div>
-                        <Label className="text-xs">Date</Label>
-                        <Input
-                          type="date"
-                          value={editingRecord.date.split("T")[0]}
-                          onChange={(e) =>
-                            setEditingRecord((prev) => (prev ? { ...prev, date: e.target.value } : null))
-                          }
-                          className="h-8"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Check In</Label>
-                        <Input
-                          type="time"
-                          value={editingRecord.checkIn}
-                          onChange={(e) =>
-                            setEditingRecord((prev) => (prev ? { ...prev, checkIn: e.target.value } : null))
-                          }
-                          className="h-8"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Check Out</Label>
-                        <Input
-                          type="time"
-                          value={editingRecord.checkOut || ""}
-                          onChange={(e) =>
-                            setEditingRecord((prev) => (prev ? { ...prev, checkOut: e.target.value } : null))
-                          }
-                          className="h-8"
-                        />
-                      </div>
-                      <div>
-                        <Label className="text-xs">Status</Label>
-                        <select
-                          value={editingRecord.status}
-                          onChange={(e) =>
-                            setEditingRecord((prev) => (prev ? { ...prev, status: e.target.value as any } : null))
-                          }
-                          className="w-full px-2 py-1 border border-gray-300 rounded text-sm h-8"
-                        >
-                          <option value="present">Present</option>
-                          <option value="late">Late</option>
-                          <option value="absent">Absent</option>
-                        </select>
-                      </div>
-                    </div>
-                  ) : (
-                    // View Mode
-                    <div className="flex items-center space-x-4 flex-1">
-                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                        <Users className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <div className="font-medium">{record.userName}</div>
-                        <div className="text-sm text-gray-600">{new Date(record.date).toLocaleDateString()}</div>
-                      </div>
-                      <div className="text-center">
-                        <div className="text-sm font-medium flex items-center">
-                          <Clock className="h-4 w-4 mr-1" />
-                          {record.checkIn}
-                        </div>
-                        {record.checkOut && <div className="text-xs text-gray-500">Out: {record.checkOut}</div>}
-                      </div>
-                      <div className="text-center">
-                        <div className="text-sm font-medium">{record.hoursWorked}h</div>
-                        <div className="text-xs text-gray-500">worked</div>
-                      </div>
-                      <Badge
-                        variant={
-                          record.status === "present"
-                            ? "default"
-                            : record.status === "late"
-                              ? "secondary"
-                              : "destructive"
-                        }
-                      >
-                        {record.status}
-                      </Badge>
-                    </div>
-                  )}
-
-                  <div className="flex items-center space-x-2">
-                    {editingRecord && editingRecord._id === record._id ? (
-                      <>
-                        <Button size="sm" onClick={handleUpdateRecord}>
-                          Save
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={() => setEditingRecord(null)}>
-                          Cancel
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Button size="sm" variant="outline" onClick={() => setEditingRecord(record)}>
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => handleDeleteRecord(record._id)}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </>
-                    )}
+      <Dialog open={!!selectedEmployee} onOpenChange={open => { if (!open) setSelectedEmployee(null) }}>
+        <DialogContent className="max-w-2xl w-full">
+          <DialogTitle>Attendance Records</DialogTitle>
+          {selectedEmployee && (
+            <div>
+              <div className="flex items-center gap-4 mb-4 justify-between">
+                <div className="flex items-center gap-4">
+                  <Avatar>
+                    <AvatarImage src={selectedEmployee.faceImageUrl} alt={selectedEmployee.name} />
+                    <AvatarFallback>{selectedEmployee.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0,2)}</AvatarFallback>
+                  </Avatar>
+                  <div>
+                    <div className="font-semibold text-lg">{selectedEmployee.name}</div>
+                    <div className="text-xs text-gray-400 font-mono">ID: {selectedEmployee.employeeId}</div>
+                    {selectedEmployee.department && <Badge variant="secondary">{selectedEmployee.department}</Badge>}
                   </div>
                 </div>
-              ))
-            ) : (
-              <div className="text-center py-8 text-gray-500">No attendance records found</div>
-            )}
-          </div>
-        </CardContent>
-      </Card>
+                <div className="text-right">
+                  <span className="font-semibold text-sm text-gray-500">Total Hours:</span><br />
+                  <span className="font-bold text-lg">{getTotalDurationString(attendanceRecords)}</span>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="min-w-full text-sm border">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-3 py-2 text-left">Date</th>
+                      <th className="px-3 py-2 text-left">Check-in</th>
+                      <th className="px-3 py-2 text-left">Check-out</th>
+                      <th className="px-3 py-2 text-left">Status</th>
+                      <th className="px-3 py-2 text-left">Hours</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {attendanceLoading ? (
+                      <tr><td colSpan={5} className="text-center py-4">Loading...</td></tr>
+                    ) : attendanceRecords.length > 0 ? (
+                      attendanceRecords.map(record => (
+                        <tr key={record._id} className="border-b">
+                          <td className="px-3 py-2">{new Date(record.date).toLocaleDateString()}</td>
+                          <td className="px-3 py-2">{record.checkInTime ? new Date(record.checkInTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'}</td>
+                          <td className="px-3 py-2">{record.checkOutTime ? new Date(record.checkOutTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--'}</td>
+                          <td className="px-3 py-2"><Badge variant={record.status === 'present' ? 'default' : record.status === 'late' ? 'secondary' : 'destructive'}>{record.status}</Badge></td>
+                          <td className="px-3 py-2">{record.checkInTime && record.checkOutTime ? getDurationString(record.checkInTime, record.checkOutTime) : '--'}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr><td colSpan={5} className="text-center py-4 text-gray-500">No attendance records found</td></tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

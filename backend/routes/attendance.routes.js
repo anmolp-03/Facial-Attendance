@@ -20,4 +20,7 @@ router.get('/admin/payroll', authMiddleware.verifyToken, authMiddleware.verifyAd
 router.get('/my-records', authMiddleware.verifyToken, attendanceController.getMyAttendanceRecords);
 router.get('/my-summary', authMiddleware.verifyToken, attendanceController.getMyAttendanceSummary);
 
+// New POST route '/scan'
+router.post('/scan', attendanceController.scanAndMarkAttendance);
+
 module.exports = router; 

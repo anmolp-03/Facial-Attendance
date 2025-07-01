@@ -13,5 +13,9 @@ router.post('/setup-admin', authController.setupFirstAdmin);
 router.post('/register', adminAuth, authController.register);
 router.get('/users', adminAuth, authController.getAllUsers);
 router.delete('/users/:id', adminAuth, authController.deleteUser);
+router.post('/register-with-face', adminAuth, authController.registerWithFace);
+router.post('/add-face-to-user', adminAuth, authController.addFaceToUser);
+router.post('/admin/reauth', authController.adminReauth);
+router.put('/users/:id', adminAuth, authController.updateUser);
 
 module.exports = router; 
