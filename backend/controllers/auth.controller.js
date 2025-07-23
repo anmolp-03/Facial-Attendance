@@ -558,3 +558,38 @@ exports.updateUser = async (req, res) => {
     res.status(500).json({ message: 'Server error', error: err.message });
   }
 }; 
+
+// Admin resets an employee's password
+exports.adminResetPassword = async (req, res) => {
+  try {
+    const { adminEmail, adminPassword, employeeEmail, newPassword } = req.body;
+    if (!adminEmail || !adminPassword || !employeeEmail || !newPassword) {
+      return res.status(400).json({ message: 'All fields are required.' });
+    }
+    // Find admin
+    const admin = await User.findOne({ email: adminEmail.toLowerCase(), role: 'admin' });
+    if (!admin) {
+      return res.status(401).json({ message: 'Invalid admin credentials.' });
+    }
+    const isAdminMatch = await bcrypt.compare(adminPassword, admin.password);
+    if (!isAdminMatch) {
+      return res.status(401).json({ message: 'Invalid admin credentials.' });
+    }
+    // Find employee
+    const employee = await User.findOne({ email: employeeEmail.toLowerCase(), role: 'employee' });
+    if (!employee) {
+      return res.status(404).json({ message: 'Employee not found.' });
+    }
+    // Validate new password
+    if (newPassword.length < 8) {
+      return res.status(400).json({ message: 'Password must be at least 8 characters long.' });
+    }
+    // Hash and update password
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    employee.password = hashedPassword;
+    await employee.save();
+    res.json({ message: 'Password reset successfully.' });
+  } catch (err) {
+    res.status(500).json({ message: 'Server error', error: err.message });
+  }
+}; 

@@ -16,6 +16,7 @@ export default function HomePage() {
     message: string
     name?: string
     employeeId?: string
+    time?: string
   } | null>(null)
   const [isScanning, setIsScanning] = useState(false)
   const [isWithinGeofence, setIsWithinGeofence] = useState<boolean | null>(null)
@@ -31,31 +32,23 @@ export default function HomePage() {
 
     setIsScanning(true)
     try {
-      // Send to Python Flask backend for face recognition
-      const response = await fetch("http://localhost:8000/face-recognition/scan", {
+      // Send to Node.js backend for face recognition and attendance marking
+      const response = await fetch("http://localhost:5000/api/attendance/scan", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ image: imageData }),
+        body: JSON.stringify({ faceImage: imageData }),
       })
 
       const result = await response.json()
-      setScanResult(result)
-
-      // If face recognition successful, mark attendance in Node.js backend
-      if (result.success && result.employeeId) {
-        await fetch("http://localhost:5000/api/attendance/mark", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            userId: result.employeeId,
-            timestamp: new Date().toISOString(),
-          }),
-        })
-      }
+      setScanResult({
+        success: response.ok,
+        message: result.message || (response.ok ? "Attendance marked successfully." : "Face not recognized."),
+        name: result.attendance?.user?.name || result.name,
+        employeeId: result.attendance?.user?.employeeId || result.employeeId,
+        time: result.attendance?.time,
+      })
     } catch (error) {
       setScanResult({
         success: false,
@@ -122,8 +115,12 @@ export default function HomePage() {
                   <div className={`font-medium ${scanResult.success ? "text-green-800" : "text-red-800"}`}>
                     {scanResult.message}
                   </div>
-                  {scanResult.success && scanResult.name && (
-                    <div className="mt-2 text-lg font-bold text-green-800">Welcome, {scanResult.name}!</div>
+                  {scanResult.success && (
+                    <div className="mt-2 text-lg font-bold text-green-800">
+                      {scanResult.name && <div>Name: {scanResult.name}</div>}
+                      {scanResult.employeeId && <div>Employee ID: {scanResult.employeeId}</div>}
+                      {scanResult.time && <div>Time: {scanResult.time}</div>}
+                    </div>
                   )}
                 </AlertDescription>
               </Alert>

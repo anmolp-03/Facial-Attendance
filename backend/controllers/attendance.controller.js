@@ -223,7 +223,13 @@ exports.getAttendanceSummary = async (req, res) => {
             totalAbsent: '$totalAbsent',
             totalOnLeave: '$totalOnLeave',
             totalHoursWorked: '$totalHoursWorked',
-            averageHoursPerDay: { $divide: ['$totalHoursWorked', { $add: ['$totalPresent', '$totalLate'] }] }
+            averageHoursPerDay: {
+                $cond: [
+                    { $gt: [{ $add: ['$totalPresent', '$totalLate'] }, 0] },
+                    { $divide: ['$totalHoursWorked', { $add: ['$totalPresent', '$totalLate'] }] },
+                    0
+                ]
+            }
         };
 
         if (period === 'daily') {
@@ -256,7 +262,13 @@ exports.getAttendanceSummary = async (req, res) => {
             project.record_year = '$_id.attendanceYear';
             project.week_start_date = '$weekStartDate';
             project.week_end_date = '$weekEndDate';
-            project.averageHoursPerWeek = '$totalHoursWorked';
+            project.averageHoursPerWeek = {
+                $cond: [
+                  { $gt: [{ $add: ['$totalPresent', '$totalLate'] }, 0] },
+                  { $divide: ['$totalHoursWorked', { $add: ['$totalPresent', '$totalLate'] }] },
+                  0
+                ]
+              };
             delete project.record_date;
         } else if (period === 'monthly') {
             group = {
@@ -276,7 +288,13 @@ exports.getAttendanceSummary = async (req, res) => {
             project.record_year = '$_id.attendanceYear';
             project.month_start_date = '$monthStartDate';
             project.month_end_date = '$monthEndDate';
-            project.averageHoursPerMonth = '$totalHoursWorked';
+            project.averageHoursPerMonth = {
+                $cond: [
+                    { $gt: [{ $add: ['$totalPresent', '$totalLate'] }, 0] },
+                    { $divide: ['$totalHoursWorked', { $add: ['$totalPresent', '$totalLate'] }] },
+                    0
+                ]
+            };
             delete project.record_date;
         } else {
             return res.status(400).json({ message: 'Invalid period specified. Use daily, weekly, or monthly.' });
@@ -436,135 +454,37 @@ exports.getMyAttendanceRecords = async (req, res) => {
 exports.getMyAttendanceSummary = async (req, res) => {
     try {
         const userId = req.user._id; // Get user ID from authenticated token
-        const { period = 'daily', startDate, endDate } = req.query;
-        let matchQuery = { user: new mongoose.Types.ObjectId(userId) };
+        // Remove date filtering for overall summary
+        const matchQuery = { user: new mongoose.Types.ObjectId(userId) };
 
-        let start;
-        let end;
-
-        if (startDate && endDate) {
-            start = getStartOfDay(startDate);
-            end = getStartOfDay(endDate);
-            matchQuery.date = { '$gte': start, '$lte': end };
-        } else {
-            // Default to last 30 days if no range specified
-            end = getStartOfDay(new Date());
-            start = getStartOfDay(new Date());
-            start.setDate(end.getDate() - 30);
-            matchQuery.date = { '$gte': start, '$lte': end };
-        }
-
-        let group = {};
-        let project = {
-            _id: 0,
-            user_id: '$_id.userId',
-            user_name: '$userName',
-            employee_id: '$employeeId',
-            record_date: '$_id.attendanceDate',
-            totalPresent: '$totalPresent',
-            totalLate: '$totalLate',
-            totalAbsent: '$totalAbsent',
-            totalOnLeave: '$totalOnLeave',
-            totalHoursWorked: '$totalHoursWorked',
-            averageHoursPerDay: { $divide: ['$totalHoursWorked', { $add: ['$totalPresent', '$totalLate'] }] }
-        };
-
-        if (period === 'daily') {
-            group = {
-                _id: { userId: '$user', attendanceDate: '$date' },
-                userName: { $first: '$user.name' },
-                employeeId: { $first: '$user.employeeId' },
-                totalPresent: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } },
-                totalLate: { $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] } },
-                totalAbsent: { $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] } },
-                totalOnLeave: { $sum: { $cond: [{ $eq: ['$status', 'on_leave'] }, 1, 0] } },
-                totalHoursWorked: { $sum: '$totalHours' },
-                overtimeHours: { $sum: { $cond: [{ $gt: ['$totalHours', 8] }, { $subtract: ['$totalHours', 8] }, 0] } }
-            };
-        } else if (period === 'weekly') {
-            group = {
-                _id: { userId: '$user', attendanceWeek: { $isoWeek: '$date' }, attendanceYear: { $isoWeekYear: '$date' } },
-                userName: { $first: '$user.name' },
-                employeeId: { $first: '$user.employeeId' },
-                totalPresent: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } },
-                totalLate: { $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] } },
-                totalAbsent: { $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] } },
-                totalOnLeave: { $sum: { $cond: [{ $eq: ['$status', 'on_leave'] }, 1, 0] } },
-                totalHoursWorked: { $sum: '$totalHours' },
-                overtimeHours: { $sum: { $cond: [{ $gt: ['$totalHours', 8] }, { $subtract: ['$totalHours', 8] }, 0] } },
-                weekStartDate: { $min: '$date' },
-                weekEndDate: { $max: '$date' }
-            };
-            project.record_week = '$_id.attendanceWeek';
-            project.record_year = '$_id.attendanceYear';
-            project.week_start_date = '$weekStartDate';
-            project.week_end_date = '$weekEndDate';
-            project.averageHoursPerWeek = '$totalHoursWorked';
-            delete project.record_date;
-        } else if (period === 'monthly') {
-            group = {
-                _id: { userId: '$user', attendanceMonth: { $month: '$date' }, attendanceYear: { $year: '$date' } },
-                userName: { $first: '$user.name' },
-                employeeId: { $first: '$user.employeeId' },
-                totalPresent: { $sum: { $cond: [{ $eq: ['$status', 'present'] }, 1, 0] } },
-                totalLate: { $sum: { $cond: [{ $eq: ['$status', 'late'] }, 1, 0] } },
-                totalAbsent: { $sum: { $cond: [{ $eq: ['$status', 'absent'] }, 1, 0] } },
-                totalOnLeave: { $sum: { $cond: [{ $eq: ['$status', 'on_leave'] }, 1, 0] } },
-                totalHoursWorked: { $sum: '$totalHours' },
-                overtimeHours: { $sum: { $cond: [{ $gt: ['$totalHours', 8] }, { $subtract: ['$totalHours', 8] }, 0] } },
-                monthStartDate: { $min: '$date' },
-                monthEndDate: { $max: '$date' }
-            };
-            project.record_month = '$_id.attendanceMonth';
-            project.record_year = '$_id.attendanceYear';
-            project.month_start_date = '$monthStartDate';
-            project.month_end_date = '$monthEndDate';
-            project.averageHoursPerMonth = '$totalHoursWorked';
-            delete project.record_date;
-        } else {
-            return res.status(400).json({ message: 'Invalid period specified. Use daily, weekly, or monthly.' });
-        }
-
-        // Add attendance rate calculation
-        project.attendance_rate = {
-            $multiply: [
-                { $divide: [
-                    { $add: ['$totalPresent', '$totalLate'] },
-                    { $add: ['$totalPresent', '$totalLate', '$totalAbsent', '$totalOnLeave'] }
-                ]},
-                100
-            ]
-        };
-
-        const pipeline = [
-            { '$match': matchQuery },
-            { '$lookup': { 
-                from: 'users', 
-                localField: 'user', 
-                foreignField: '_id', 
-                as: 'user',
-                pipeline: [
-                    { '$project': { 
-                        _id: 1,
-                        name: 1,
-                        employeeId: 1,
-                        email: 1,
-                        role: 1
-                    }}
-                ]
-            }},
-            { '$unwind': '$user' },
-            { '$group': group },
-            { '$project': project },
-            { '$sort': { 'record_year': 1, 'record_month': 1, 'record_week': 1, 'record_date': 1 } }
-        ];
-
-        console.log('My Attendance Summary Aggregation Pipeline:', JSON.stringify(pipeline, null, 2));
-
-        const summary = await Attendance.aggregate(pipeline);
-
-        res.status(200).json(summary);
-
+        // Aggregate all records for this user
+        const result = await Attendance.aggregate([
+            { $match: matchQuery },
+            {
+                $group: {
+                    _id: null,
+                    presentDays: { $sum: { $cond: [{ $eq: ["$status", "present"] }, 1, 0] } },
+                    lateDays: { $sum: { $cond: [{ $eq: ["$status", "late"] }, 1, 0] } },
+                    absentDays: { $sum: { $cond: [{ $eq: ["$status", "absent"] }, 1, 0] } },
+                    onLeaveDays: { $sum: { $cond: [{ $eq: ["$status", "on_leave"] }, 1, 0] } },
+                    totalHours: { $sum: "$totalHours" },
+                    totalDays: { $sum: 1 }
+                }
+            }
+        ]);
+        const data = result[0] || { presentDays: 0, lateDays: 0, absentDays: 0, onLeaveDays: 0, totalHours: 0, totalDays: 0 };
+        const attended = data.presentDays + data.lateDays;
+        const attendanceRate = data.totalDays > 0 ? Math.round((attended / data.totalDays) * 100) : 0;
+        const averageHours = attended > 0 ? data.totalHours / attended : 0;
+        res.status(200).json({
+            presentDays: data.presentDays,
+            lateDays: data.lateDays,
+            absentDays: data.absentDays,
+            onLeaveDays: data.onLeaveDays,
+            totalDays: data.totalDays,
+            averageHours,
+            attendanceRate
+        });
     } catch (err) {
         console.error('Get my attendance summary error:', err);
         res.status(500).json({ message: 'Server error', error: err.message });

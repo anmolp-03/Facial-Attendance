@@ -14,6 +14,7 @@ from functools import wraps
 from db_config import face_collection, employee_collection, attendance_collection
 from flask_cors import CORS
 import base64
+from bson.objectid import ObjectId
 
 # Configure logging
 logging.basicConfig(
@@ -40,16 +41,22 @@ def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get('Authorization')
+        print("Authorization header:", token)
         if not token:
+            print("No token provided.")
             return jsonify({'error': 'Token is missing'}), 401
         try:
-            token = token.split(' ')[1]  # Remove 'Bearer ' prefix
+            token = token.split(' ')[1]
             data = jwt.decode(token, app.config['SECRET_KEY'], algorithms=['HS256'])
-            current_user = employee_collection.find_one({'_id': data['employee_id']})
-            if not current_user or not current_user.get('is_admin', False):
+            print("Decoded token data:", data)
+            current_user = employee_collection.find_one({'email': data['email']})
+            print("Current user found:", current_user)
+            if not current_user or current_user.get('role') != 'admin':
+                print("Admin check failed.")
                 return jsonify({'error': 'Admin access required'}), 403
         except Exception as e:
-            return jsonify({'error': 'Invalid token'}), 401
+            print("Token decode error:", str(e))
+            return jsonify({'error': f'Invalid token: {str(e)}'}), 401
         return f(current_user, *args, **kwargs)
     return decorated
 
@@ -233,16 +240,16 @@ def upload_face(current_user):
     try:
         if 'image' not in request.files:
             return jsonify({'error': 'No image file provided'}), 400
-            
+        
         employee_id = request.form.get('employee_id')
         if not employee_id:
             return jsonify({'error': 'Employee ID is required'}), 400
-            
+        
         # Verify employee exists
         employee = employee_collection.find_one({'employee_id': employee_id})
         if not employee:
             return jsonify({'error': 'Employee not found'}), 404
-            
+        
         image_file = request.files['image']
         
         # Read image for face detection
@@ -252,12 +259,12 @@ def upload_face(current_user):
         # Check for liveness
         if not detect_liveness(image):
             return jsonify({'error': 'Liveness detection failed. Please ensure you are a real person.'}), 400
-            
+        
         # Detect face and get encoding
         face_locations = face_recognition.face_locations(image)
         if not face_locations:
             return jsonify({'error': 'No face detected in the image'}), 400
-            
+        
         face_encoding = face_recognition.face_encodings(image, face_locations)[0]
         
         # Store face encoding in MongoDB

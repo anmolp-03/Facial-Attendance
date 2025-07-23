@@ -52,6 +52,7 @@ app.get('/', (req, res) => {
 // Routes
 app.use('/api/attendance', require('./routes/attendance.routes'));
 app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/analytics', require('./routes/analytics.routes'));
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {

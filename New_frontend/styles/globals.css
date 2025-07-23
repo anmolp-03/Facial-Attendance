@@ -5,7 +5,7 @@
 body {
   font-family: Arial, Helvetica, sans-serif;
 }
-
+  
 @layer utilities {
   .text-balance {
     text-wrap: balance;
@@ -91,4 +91,101 @@ body {
   body {
     @apply bg-background text-foreground;
   }
+}
+
+/* --- Calendar attendance status circle (force override) --- */
+.react-calendar__tile.calendar-status,
+.react-calendar__tile.calendar-status--present,
+.react-calendar__tile.calendar-status--late,
+.react-calendar__tile.calendar-status--absent,
+.react-calendar__tile.calendar-status--on_leave,
+.react-calendar__tile.calendar-status--on\ leave {
+  color: #fff !important;
+  border-radius: 50% !important;
+  border: 2px solid #fff !important;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  font-weight: bold;
+}
+.react-calendar__tile.calendar-status--present {
+  background: #2563eb !important;
+  border-color: #2563eb !important;
+}
+.react-calendar__tile.calendar-status--late {
+  background: #f59e42 !important;
+  border-color: #f59e42 !important;
+}
+.react-calendar__tile.calendar-status--absent {
+  background: #ef4444 !important;
+  border-color: #ef4444 !important;
+}
+.react-calendar__tile.calendar-status--on_leave,
+.react-calendar__tile.calendar-status--on\ leave {
+  background: #a78bfa !important;
+  border-color: #a78bfa !important;
+}
+
+/* --- Highly specific calendar attendance status override --- */
+.react-calendar__tile.calendar-status.calendar-status--present,
+.react-calendar__tile.calendar-status.calendar-status--present:active,
+.react-calendar__tile.calendar-status.calendar-status--present:focus {
+  background-color: #4ade80 !important; /* green-400 */
+  color: #fff !important;
+  border-radius: 50% !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--late,
+.react-calendar__tile.calendar-status.calendar-status--late:active,
+.react-calendar__tile.calendar-status.calendar-status--late:focus {
+  background-color: #facc15 !important; /* yellow-400 */
+  color: #fff !important;
+  border-radius: 50% !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--absent,
+.react-calendar__tile.calendar-status.calendar-status--absent:active,
+.react-calendar__tile.calendar-status.calendar-status--absent:focus {
+  background-color: #f87171 !important; /* red-400 */
+  color: #fff !important;
+  border-radius: 50% !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--leave,
+.react-calendar__tile.calendar-status.calendar-status--leave:active,
+.react-calendar__tile.calendar-status.calendar-status--leave:focus {
+  background-color: #38bdf8 !important; /* blue-400 */
+  color: #fff !important;
+  border-radius: 50% !important;
+}
+
+/* --- Ensure attendance status color overrides selection (active/range) --- */
+.react-calendar__tile.calendar-status.calendar-status--present.react-calendar__tile--active,
+.react-calendar__tile.calendar-status.calendar-status--present.react-calendar__tile--rangeStart,
+.react-calendar__tile.calendar-status.calendar-status--present.react-calendar__tile--rangeEnd,
+.react-calendar__tile.calendar-status.calendar-status--present.react-calendar__tile--rangeBothEnds {
+  background-color: #4ade80 !important; /* green-400 */
+  color: #fff !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--late.react-calendar__tile--active,
+.react-calendar__tile.calendar-status.calendar-status--late.react-calendar__tile--rangeStart,
+.react-calendar__tile.calendar-status.calendar-status--late.react-calendar__tile--rangeEnd,
+.react-calendar__tile.calendar-status.calendar-status--late.react-calendar__tile--rangeBothEnds {
+  background-color: #facc15 !important; /* yellow-400 */
+  color: #fff !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--absent.react-calendar__tile--active,
+.react-calendar__tile.calendar-status.calendar-status--absent.react-calendar__tile--rangeStart,
+.react-calendar__tile.calendar-status.calendar-status--absent.react-calendar__tile--rangeEnd,
+.react-calendar__tile.calendar-status.calendar-status--absent.react-calendar__tile--rangeBothEnds {
+  background-color: #f87171 !important; /* red-400 */
+  color: #fff !important;
+}
+
+.react-calendar__tile.calendar-status.calendar-status--leave.react-calendar__tile--active,
+.react-calendar__tile.calendar-status.calendar-status--leave.react-calendar__tile--rangeStart,
+.react-calendar__tile.calendar-status.calendar-status--leave.react-calendar__tile--rangeEnd,
+.react-calendar__tile.calendar-status.calendar-status--leave.react-calendar__tile--rangeBothEnds {
+  background-color: #38bdf8 !important; /* blue-400 */
+  color: #fff !important;
 }

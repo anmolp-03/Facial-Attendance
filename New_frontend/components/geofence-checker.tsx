@@ -8,9 +8,9 @@ interface GeofenceCheckerProps {
 
 // Office coordinates (example - replace with your actual office location)
 const OFFICE_COORDINATES = {
-  latitude: 23.0581935,
-  longitude: 70.1296924,
-  radius: 100, // meters
+  latitude: 23.161238,
+  longitude: 72.544937,
+  radius: 10000, // meters
 }
 
 export default function GeofenceChecker({ onLocationUpdate }: GeofenceCheckerProps) {
@@ -37,6 +37,11 @@ export default function GeofenceChecker({ onLocationUpdate }: GeofenceCheckerPro
       OFFICE_COORDINATES.longitude,
     )
 
+    // Debug logging
+    console.log("Device coordinates:", position.coords.latitude, position.coords.longitude);
+    console.log("Office coordinates:", OFFICE_COORDINATES.latitude, OFFICE_COORDINATES.longitude);
+    console.log("Distance to office (meters):", distance);
+
     const isWithinGeofence = distance <= OFFICE_COORDINATES.radius
     onLocationUpdate(isWithinGeofence)
   }
@@ -55,8 +60,16 @@ export default function GeofenceChecker({ onLocationUpdate }: GeofenceCheckerPro
     const watchId = navigator.geolocation.watchPosition(
       checkGeofence,
       (error) => {
-        console.error("Geolocation error:", error)
-        setLocationError("Unable to retrieve your location.")
+        // Improved error logging
+        console.error("Geolocation error:", error, error?.message, error?.code);
+        let errorMsg = "Unable to retrieve your location.";
+        if (error) {
+          if (error.code === 1) errorMsg += " Permission denied.";
+          else if (error.code === 2) errorMsg += " Position unavailable.";
+          else if (error.code === 3) errorMsg += " Timeout.";
+          if (error.message) errorMsg += ` (${error.message})`;
+        }
+        setLocationError(errorMsg);
         // For development, allow access even without location
         onLocationUpdate(true)
       },

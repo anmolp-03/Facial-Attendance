@@ -19,8 +19,8 @@ def get_database():
         client.admin.command('ping')
         logger.info("Successfully connected to MongoDB!")
         
-        # Return the face_recognition database
-        return client.face_recognition_db
+        # Return the test database
+        return client['test']
     except Exception as e:
         logger.error(f"Error connecting to MongoDB: {str(e)}")
         raise
@@ -28,13 +28,9 @@ def get_database():
 # Initialize database
 db = get_database()
 
-# Collections
-face_collection = db.face_encodings
-employee_collection = db.employees
-attendance_collection = db.attendance_logs
-
-# Example collections (adjust as needed)
+# Collections - ensure these names match your Node.js models/collections
 face_collection = db.get_collection('faces')
-employee_collection = db.get_collection('employees')
+# The user collection is likely named 'users' by Mongoose default
+employee_collection = db.get_collection('users') 
 attendance_collection = db.get_collection('attendance') 
  

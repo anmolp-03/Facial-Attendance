@@ -9,12 +9,19 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { User, Lock, ArrowLeft } from "lucide-react"
 import Link from "next/link"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 
 export default function LoginPage() {
   const [credentials, setCredentials] = useState({ email: "", password: "" })
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
+  const [showReset, setShowReset] = useState(false);
+  const [resetForm, setResetForm] = useState({ adminEmail: "", adminPassword: "", employeeEmail: "", newPassword: "" });
+  const [resetLoading, setResetLoading] = useState(false);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [resetSuccess, setResetSuccess] = useState<string | null>(null);
+
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -45,6 +52,31 @@ export default function LoginPage() {
       setIsLoading(false)
     }
   }
+
+  const handleResetSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setResetLoading(true);
+    setResetError(null);
+    setResetSuccess(null);
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/auth/admin-reset-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(resetForm),
+      });
+      const data = await response.json();
+      if (response.ok) {
+        setResetSuccess("Password reset successfully.");
+        setResetForm({ adminEmail: "", adminPassword: "", employeeEmail: "", newPassword: "" });
+      } else {
+        setResetError(data.message || "Reset failed");
+      }
+    } catch {
+      setResetError("Network error. Please try again.");
+    } finally {
+      setResetLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
@@ -109,6 +141,15 @@ export default function LoginPage() {
                   </>
                 )}
               </Button>
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  className="text-xs text-blue-600 hover:underline focus:outline-none"
+                  onClick={() => setShowReset(true)}
+                >
+                  Forgot Password?
+                </button>
+              </div>
             </form>
 
             <div className="mt-6 text-center">
@@ -121,6 +162,62 @@ export default function LoginPage() {
             </div>
           </CardContent>
         </Card>
+        {/* Forgot Password Modal */}
+        <Dialog open={showReset} onOpenChange={setShowReset}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Admin Password Reset</DialogTitle>
+              <DialogDescription>Admin can reset an employee's password here.</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={handleResetSubmit} className="space-y-3">
+              <div>
+                <Label htmlFor="adminEmail">Admin Email</Label>
+                <Input
+                  id="adminEmail"
+                  type="email"
+                  value={resetForm.adminEmail}
+                  onChange={e => setResetForm(f => ({ ...f, adminEmail: e.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="adminPassword">Admin Password</Label>
+                <Input
+                  id="adminPassword"
+                  type="password"
+                  value={resetForm.adminPassword}
+                  onChange={e => setResetForm(f => ({ ...f, adminPassword: e.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="employeeEmail">Employee Email</Label>
+                <Input
+                  id="employeeEmail"
+                  type="email"
+                  value={resetForm.employeeEmail}
+                  onChange={e => setResetForm(f => ({ ...f, employeeEmail: e.target.value }))}
+                  required
+                />
+              </div>
+              <div>
+                <Label htmlFor="newPassword">New Password</Label>
+                <Input
+                  id="newPassword"
+                  type="password"
+                  value={resetForm.newPassword}
+                  onChange={e => setResetForm(f => ({ ...f, newPassword: e.target.value }))}
+                  required
+                />
+              </div>
+              {resetError && <Alert className="border-red-500 bg-red-50"><AlertDescription className="text-red-800">{resetError}</AlertDescription></Alert>}
+              {resetSuccess && <Alert className="border-green-500 bg-green-50"><AlertDescription className="text-green-800">{resetSuccess}</AlertDescription></Alert>}
+              <Button type="submit" className="w-full" disabled={resetLoading}>
+                {resetLoading ? "Resetting..." : "Reset Password"}
+              </Button>
+            </form>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   )

@@ -65,22 +65,28 @@ export default function EmployeeRegistration({ onSuccess }: EmployeeRegistration
     setError(null)
 
     try {
-      // Upload face to Python backend
-      const response = await fetch("http://localhost:8000/api/admin/upload-face", {
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        setError("Admin token not found. Please log in again.");
+        setIsLoading(false);
+        return;
+      }
+      // Upload face to Node.js backend (update existing user)
+      const response = await fetch("http://localhost:5000/api/auth/add-face-to-user", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
         },
         body: JSON.stringify({
-          name: employeeData.name,
           email: employeeData.email,
-          image: imageData,
+          faceImage: imageData,
         }),
       })
 
       const result = await response.json()
 
-      if (result.success) {
+      if (response.ok && result.faceImageUrl) {
         setSuccess("Employee face registered successfully!")
         setTimeout(() => {
           onSuccess()

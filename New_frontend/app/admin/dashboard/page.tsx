@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import { useRouter } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -10,7 +10,8 @@ import { Users, UserPlus, Calendar, TrendingUp, Shield, LogOut, Eye, Edit, Trash
 import EmployeeRegistration from "@/components/employee-registration"
 import AttendanceManagement from "@/components/attendance-management"
 import FaceScanner from "@/components/face-scanner"
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts'
+import { PieLabelRenderProps, TooltipProps } from 'recharts';
 
 interface Employee {
   _id: string
@@ -26,6 +27,13 @@ interface Employee {
   leavingDate?: string
   joiningDate?: string
 }
+
+const STATUS_COLORS: Record<string, string> = {
+  Present: "#2563eb",    // Blue
+  Absent: "#ef4444",     // Red
+  Late: "#f59e42",       // Orange
+  "On Leave": "#a78bfa", // Purple
+};
 
 export default function AdminDashboard() {
   const [admin, setAdmin] = useState<any>(null)
@@ -74,7 +82,49 @@ export default function AdminDashboard() {
   const [deleteLoading, setDeleteLoading] = useState(false)
   const [attendanceTrend, setAttendanceTrend] = useState<any[]>([])
   const [analyticsLoading, setAnalyticsLoading] = useState(false)
+  const [statusBreakdown, setStatusBreakdown] = useState({ present: 0, absent: 0, late: 0, on_leave: 0 });
+  const [statusLoading, setStatusLoading] = useState(false);
+  const [avgWorkHours, setAvgWorkHours] = useState<number | null>(null);
+  const [avgWorkHoursLoading, setAvgWorkHoursLoading] = useState(false);
   const router = useRouter()
+  const [selectedEmployee, setSelectedEmployee] = useState<string>("");
+  const [employeeStatusBreakdown, setEmployeeStatusBreakdown] = useState({ present: 0, absent: 0, late: 0, on_leave: 0 });
+  const [employeeStatusLoading, setEmployeeStatusLoading] = useState(false);
+  const [departmentStatusBreakdown, setDepartmentStatusBreakdown] = useState({ present: 0, absent: 0, late: 0, on_leave: 0 });
+  const [departmentStatusLoading, setDepartmentStatusLoading] = useState(false);
+  // Add period selector state
+  const [period, setPeriod] = useState<'weekly' | 'monthly' | 'overall' | 'custom'>('overall');
+  const [customStartDate, setCustomStartDate] = useState<string>("");
+  const [customEndDate, setCustomEndDate] = useState<string>("");
+
+  // Get unique departments from employees
+  const departments = useMemo(() => {
+    const set = new Set<string>();
+    employees.forEach(emp => { if (emp.department) set.add(emp.department); });
+    return Array.from(set);
+  }, [employees]);
+
+  // Fetch per-employee status breakdown
+  useEffect(() => {
+    if (!selectedEmployee) return;
+    setEmployeeStatusLoading(true);
+    fetch(`http://localhost:5000/api/analytics/status-breakdown/employee/${selectedEmployee}`)
+      .then(res => res.json())
+      .then(data => setEmployeeStatusBreakdown(data.breakdown || { present: 0, absent: 0, late: 0, on_leave: 0 }))
+      .catch(() => setEmployeeStatusBreakdown({ present: 0, absent: 0, late: 0, on_leave: 0 }))
+      .finally(() => setEmployeeStatusLoading(false));
+  }, [selectedEmployee]);
+
+  // Fetch per-department status breakdown
+  useEffect(() => {
+    if (!selectedEmployee) return;
+    setDepartmentStatusLoading(true);
+    fetch(`http://localhost:5000/api/analytics/status-breakdown/employee/${selectedEmployee}`)
+      .then(res => res.json())
+      .then(data => setDepartmentStatusBreakdown(data.breakdown || { present: 0, absent: 0, late: 0, on_leave: 0 }))
+      .catch(() => setDepartmentStatusBreakdown({ present: 0, absent: 0, late: 0, on_leave: 0 }))
+      .finally(() => setDepartmentStatusLoading(false));
+  }, [selectedEmployee]);
 
   useEffect(() => {
     const token = localStorage.getItem("adminToken")
@@ -338,16 +388,14 @@ export default function AdminDashboard() {
 
   // Fetch attendance trend when Reports tab is active
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const hash = window.location.hash;
-      if (hash.includes('reports')) fetchAttendanceTrend();
-    }
+    fetchAttendanceTrend();
   }, []);
 
   const fetchAttendanceTrend = async () => {
     setAnalyticsLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/analytics/attendance-trend');
+      const params = new URLSearchParams(getPeriodRange() as any).toString();
+      const res = await fetch(`http://localhost:5000/api/analytics/attendance-trend${params ? `?${params}` : ''}`);
       const data = await res.json();
       setAttendanceTrend(Array.isArray(data.trend) ? data.trend : []);
     } catch {
@@ -356,6 +404,75 @@ export default function AdminDashboard() {
       setAnalyticsLoading(false);
     }
   };
+
+  const fetchStatusBreakdown = async () => {
+    setStatusLoading(true);
+    try {
+      const params = new URLSearchParams(getPeriodRange() as any).toString();
+      const res = await fetch(`http://localhost:5000/api/analytics/status-breakdown${params ? `?${params}` : ''}`);
+      const data = await res.json();
+      setStatusBreakdown(data.breakdown || { present: 0, absent: 0, late: 0, on_leave: 0 });
+    } catch {
+      setStatusBreakdown({ present: 0, absent: 0, late: 0, on_leave: 0 });
+    } finally {
+      setStatusLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchStatusBreakdown();
+  }, []);
+
+  const fetchAvgWorkHours = async () => {
+    setAvgWorkHoursLoading(true);
+    try {
+      const params = new URLSearchParams(getPeriodRange() as any).toString();
+      const res = await fetch(`http://localhost:5000/api/analytics/average-work-hours${params ? `?${params}` : ''}`);
+      const data = await res.json();
+      setAvgWorkHours(data.avgWorkHours ?? null);
+    } catch {
+      setAvgWorkHours(null);
+    } finally {
+      setAvgWorkHoursLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchAvgWorkHours();
+  }, []);
+
+  // Helper to get start/end for API
+  const getPeriodRange = () => {
+    if (period === 'custom' && customStartDate && customEndDate) {
+      return { startDate: customStartDate, endDate: customEndDate };
+    }
+    // Default logic for weekly/monthly/overall
+    const today = new Date();
+    let start: Date;
+    if (period === 'weekly') {
+      start = new Date(today);
+      start.setDate(today.getDate() - 6);
+    } else if (period === 'monthly') {
+      start = new Date(today);
+      start.setDate(today.getDate() - 29);
+    } else {
+      // overall: no range (let backend default)
+      return {};
+    }
+    return {
+      startDate: start.toISOString().slice(0, 10),
+      endDate: today.toISOString().slice(0, 10),
+    };
+  };
+
+  // In useEffect for period/employee change, call fetches only if custom range is valid
+  useEffect(() => {
+    if (period === 'custom' && (!customStartDate || !customEndDate)) return;
+    fetchAttendanceTrend();
+    fetchStatusBreakdown();
+    fetchAvgWorkHours();
+    // ...fetch employee/department breakdown if needed
+  }, [period, customStartDate, customEndDate, selectedEmployee]);
 
   if (isLoading) {
     return (
@@ -366,6 +483,47 @@ export default function AdminDashboard() {
         </div>
       </div>
     )
+  }
+
+  function renderCustomizedLabel({
+    cx,
+    cy,
+    midAngle,
+    innerRadius,
+    outerRadius,
+    percent,
+  }: PieLabelRenderProps): React.ReactElement | null {
+    const RADIAN = Math.PI / 180;
+    const radius = (innerRadius as number) + ((outerRadius as number) - (innerRadius as number)) * 0.5;
+    const x = (cx as number) + radius * Math.cos(-midAngle * RADIAN);
+    const y = (cy as number) + radius * Math.sin(-midAngle * RADIAN);
+    return percent && percent > 0 ? (
+      <text
+        x={x}
+        y={y}
+        fill="#fff"
+        textAnchor={x > (cx as number) ? "start" : "end"}
+        dominantBaseline="central"
+        fontSize={14}
+        fontWeight="bold"
+      >
+        {`${(percent * 100).toFixed(0)}%`}
+      </text>
+    ) : null;
+  }
+
+  function CustomTooltip({ active, payload }: TooltipProps<any, any>): React.ReactElement | null {
+    if (active && payload && payload.length) {
+      const { name, value } = payload[0];
+      // Some recharts payloads may not have percent, so we check and fallback
+      const percent = (payload[0] as any).percent;
+      return (
+        <div className="bg-white border rounded shadow px-3 py-2 text-sm">
+          <span className="font-semibold">{name}</span>: {value} ({(percent * 100).toFixed(1)}%)
+        </div>
+      );
+    }
+    return null;
   }
 
   return (
@@ -631,22 +789,192 @@ export default function AdminDashboard() {
               <CardHeader>
                 <CardTitle>System Reports</CardTitle>
                 <CardDescription>Comprehensive analytics and reporting</CardDescription>
+                {/* Single Select Period dropdown below heading */}
+                <div className="mt-4 mb-2 flex flex-col md:flex-row md:items-center md:justify-start">
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Select Period</label>
+                    <select
+                      className="border rounded px-3 py-2 min-w-[200px]"
+                      value={period}
+                      onChange={e => {
+                        setPeriod(e.target.value as 'weekly' | 'monthly' | 'overall' | 'custom');
+                        if (e.target.value !== 'custom') {
+                          setCustomStartDate("");
+                          setCustomEndDate("");
+                        }
+                      }}
+                    >
+                      <option value="weekly">Weekly</option>
+                      <option value="monthly">Monthly</option>
+                      <option value="overall">Overall</option>
+                      <option value="custom">Custom Range</option>
+                    </select>
+                  </div>
+                  {period === 'custom' && (
+                    <div className="flex gap-2 mt-2 md:mt-0 md:ml-4 items-end">
+                      <div>
+                        <label className="block text-sm font-medium mb-1">Start Date</label>
+                        <input
+                          type="date"
+                          className="border rounded px-3 py-2"
+                          value={customStartDate}
+                          max={customEndDate || undefined}
+                          onChange={e => setCustomStartDate(e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-1">End Date</label>
+                        <input
+                          type="date"
+                          className="border rounded px-3 py-2"
+                          value={customEndDate}
+                          min={customStartDate || undefined}
+                          max={new Date().toISOString().slice(0, 10)}
+                          onChange={e => setCustomEndDate(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
+                {/* Remove all other Select Period dropdowns below */}
                 <div className="mb-8">
-                  <h3 className="font-semibold mb-2">Attendance Rate (Last 30 Days)</h3>
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="font-semibold">Attendance Rate (Last 30 Days)</h3>
+                    <div className="flex gap-2">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={fetchAttendanceTrend}
+                        disabled={analyticsLoading}
+                      >
+                        {analyticsLoading ? 'Loading...' : 'Refresh'}
+                      </Button>
+                    </div>
+                  </div>
                   {analyticsLoading ? (
-                    <div>Loading chart...</div>
+                    <div className="flex items-center justify-center h-64">
+                      <div className="text-center">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div>
+                        <p className="text-gray-600">Loading analytics...</p>
+                      </div>
+                    </div>
+                  ) : attendanceTrend.length === 0 ? (
+                    <div className="flex items-center justify-center h-64">
+                      <div className="text-center text-gray-500">
+                        <TrendingUp className="h-12 w-12 mx-auto mb-2 text-gray-400" />
+                        <p>No attendance data available</p>
+                        <p className="text-sm">Attendance records will appear here once employees start marking attendance</p>
+                      </div>
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={300}>
                       <LineChart data={attendanceTrend} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" />
-                        <XAxis dataKey="date" tickFormatter={d => new Date(d).toLocaleDateString()} />
-                        <YAxis domain={[0, 100]} tickFormatter={v => `${v}%`} />
-                        <Tooltip formatter={v => `${v.toFixed(1)}%`} labelFormatter={d => new Date(d).toLocaleDateString()} />
+                        <XAxis dataKey="date" tickFormatter={(d: string) => new Date(d).toLocaleDateString()} />
+                        <YAxis domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} />
+                        <Tooltip
+                          formatter={(v: number | string) => {
+                            const num = typeof v === 'number' ? v : parseFloat(v as string);
+                            return isNaN(num) ? v : `${num.toFixed(1)}%`;
+                          }}
+                          labelFormatter={(d: string) => new Date(d).toLocaleDateString()}
+                        />
                         <Line type="monotone" dataKey="attendanceRate" stroke="#2563eb" strokeWidth={2} dot={false} />
                       </LineChart>
                     </ResponsiveContainer>
+                  )}
+                </div>
+                <div className="mb-8">
+                  <div className="flex flex-col md:flex-row md:items-center md:gap-6 mb-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Select Employee</label>
+                      <select
+                        className="border rounded px-3 py-2 min-w-[200px]"
+                        value={selectedEmployee}
+                        onChange={e => setSelectedEmployee(e.target.value)}
+                      >
+                        <option value="">-- All Employees --</option>
+                        {employees.map(emp => (
+                          <option key={emp._id} value={emp._id}>{emp.name} ({emp.email})</option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+                  {/* Per-employee donut chart */}
+                  {selectedEmployee && (
+                    <div className="mb-8">
+                      <h3 className="font-semibold mb-2">Attendance Status Breakdown for Employee</h3>
+                      {employeeStatusLoading ? (
+                        <div>Loading...</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height={300}>
+                          <PieChart>
+                            <Pie
+                              data={[
+                                { name: 'Present', value: employeeStatusBreakdown.present },
+                                { name: 'Absent', value: employeeStatusBreakdown.absent },
+                                { name: 'Late', value: employeeStatusBreakdown.late },
+                                { name: 'On Leave', value: employeeStatusBreakdown.on_leave },
+                              ]}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={70}
+                              outerRadius={110}
+                              labelLine={false}
+                              label={renderCustomizedLabel}
+                              isAnimationActive={true}
+                            >
+                              {['Present', 'Absent', 'Late', 'On Leave'].map((key, idx) => (
+                                <Cell key={key} fill={STATUS_COLORS[key]} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<CustomTooltip />} />
+                            {Object.values(employeeStatusBreakdown).some(v => v > 0) && <Legend />}
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
+                  )}
+                  {/* Default: all employees donut chart */}
+                  {!selectedEmployee && (
+                    <div className="mb-8">
+                      <h3 className="font-semibold mb-2">Attendance Status Breakdown (All Employees)</h3>
+                      {statusLoading ? (
+                        <div>Loading status breakdown...</div>
+                      ) : (
+                        <ResponsiveContainer width="100%" height={300}>
+                          <PieChart>
+                            <Pie
+                              data={[
+                                { name: 'Present', value: statusBreakdown.present },
+                                { name: 'Absent', value: statusBreakdown.absent },
+                                { name: 'Late', value: statusBreakdown.late },
+                                { name: 'On Leave', value: statusBreakdown.on_leave },
+                              ]}
+                              dataKey="value"
+                              nameKey="name"
+                              cx="50%"
+                              cy="50%"
+                              innerRadius={70}
+                              outerRadius={110}
+                              labelLine={false}
+                              label={renderCustomizedLabel}
+                              isAnimationActive={true}
+                            >
+                              {['Present', 'Absent', 'Late', 'On Leave'].map((key, idx) => (
+                                <Cell key={key} fill={STATUS_COLORS[key]} />
+                              ))}
+                            </Pie>
+                            <Tooltip content={<CustomTooltip />} />
+                            {Object.values(statusBreakdown).some(v => v > 0) && <Legend />}
+                          </PieChart>
+                        </ResponsiveContainer>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -657,7 +985,9 @@ export default function AdminDashboard() {
                   </div>
                   <div className="p-6 bg-green-50 rounded-lg text-center">
                     <TrendingUp className="h-8 w-8 text-green-600 mx-auto mb-2" />
-                    <div className="text-2xl font-bold text-green-700">8.2h</div>
+                    <div className="text-2xl font-bold text-green-700">
+                      {avgWorkHoursLoading ? '...' : avgWorkHours !== null ? `${avgWorkHours.toFixed(2)}h` : '--'}
+                    </div>
                     <div className="text-sm text-gray-600">Average Work Hours</div>
                   </div>
                   <div className="p-6 bg-purple-50 rounded-lg text-center">

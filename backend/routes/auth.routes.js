@@ -8,6 +8,7 @@ router.post('/login', authController.login);  // Regular employee login
 router.post('/admin/login', authController.adminLogin);  // Admin login
 router.post('/logout', authController.logout);
 router.post('/setup-admin', authController.setupFirstAdmin);
+router.post('/admin-reset-password', authController.adminResetPassword);
 
 // Admin only routes
 router.post('/register', adminAuth, authController.register);
